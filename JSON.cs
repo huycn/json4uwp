@@ -42,11 +42,15 @@ namespace Json4Uwp
 
     public static class JSON
     {
-        public static string Stringify<T>(T value)
+        public static string Stringify(object value)
         {
-            var buffer = new StringBuilder();
-            CachedSerializer<T>.Instance(buffer, value);
-            return buffer.ToString();
+            if (value != null)
+            {
+                var buffer = new StringBuilder();
+                GetSerializer(value.GetType())(buffer, value);
+                return buffer.ToString();
+            }
+            return "null";
         }
 
         public static T Parse<T>(string json)
@@ -220,7 +224,9 @@ namespace Json4Uwp
         }
         static void WriteDateTimeOffset(StringBuilder output, object value)
         {
-            output.Append(((DateTimeOffset)value).ToUniversalTime().ToString(DATETIME_FORMAT, CultureInfo.InvariantCulture));
+            output.Append('"')
+                .Append(((DateTimeOffset)value).ToUniversalTime().ToString(DATETIME_FORMAT, CultureInfo.InvariantCulture))
+                .Append('"');
         }
         static void WriteDateTime(StringBuilder output, object value)
         {
@@ -237,34 +243,31 @@ namespace Json4Uwp
             else
                 itemType = null;
 
-            Serializer bodyWriter;
-            if (itemType != null)
+            if (itemType != null && itemType != typeof(object) && !itemType.GetTypeInfo().IsAbstract)
             {
                 var itemSerializer = GetSerializer(itemType);
-                bodyWriter = (output, value) =>
+                return new ArrayWriteHelper((output, value) =>
                 {
+                    if (itemSerializer == null) // in case of recursion
+                        itemSerializer = GetSerializer(itemType);
                     foreach (var item in (IEnumerable)value)
                     {
                         itemSerializer(output, item);
                         output.Append(',');
                     }
-                };
+                }).Serializer;
             }
-            else
+            return new ArrayWriteHelper((output, value) =>
             {
-                bodyWriter = (output, value) =>
+                foreach (var item in (IEnumerable)value)
                 {
-                    foreach (var item in (IEnumerable)value)
-                    {
-                        if (item == null)
-                            output.Append("null");
-                        else
-                            GetSerializer(item.GetType())(output, item);
-                        output.Append(',');
-                    }
-                };
-            }
-            return new ArrayWriteHelper(bodyWriter).Serializer;
+                    if (item == null)
+                        output.Append("null");
+                    else
+                        GetSerializer(item.GetType())(output, item);
+                    output.Append(',');
+                }
+            }).Serializer;
         }
 
         class ArrayWriteHelper
@@ -294,56 +297,56 @@ namespace Json4Uwp
 
         static Serializer CreateMapSerializer(TypeInfo typeInfo)
         {
-            Serializer bodyWriter;
             if (typeInfo.IsGenericType && typeInfo.GenericTypeArguments.Length >= 2)
             {
-                var valueSerializer = GetSerializer(typeInfo.GenericTypeArguments[1]);
-                bodyWriter = (output, value) =>
+                var valueType = typeInfo.GenericTypeArguments[1];
+                if (valueType != typeof(object) && !valueType.GetTypeInfo().IsAbstract)
                 {
-                    foreach (DictionaryEntry item in (IDictionary)value)
+                    var valueSerializer = GetSerializer(valueType);
+                    return new MapWriteHelper((output, value) =>
                     {
-                        DoWriteString(output, item.Key.ToString());
-                        output.Append(':');
-                        valueSerializer(output, item.Value);
-                        output.Append(',');
-                    }
-                };
+                        if (valueSerializer == null) // in case of recursion
+                            valueSerializer = GetSerializer(valueType);
+                        foreach (DictionaryEntry item in (IDictionary)value)
+                        {
+                            DoWriteString(output, item.Key.ToString());
+                            output.Append(':');
+                            valueSerializer(output, item.Value);
+                            output.Append(',');
+                        }
+                    }).Serializer;
+                }
             }
-            else
+            return new MapWriteHelper((output, value) =>
             {
-                bodyWriter = (output, value) =>
+                foreach (DictionaryEntry item in (IDictionary)value)
                 {
-                    foreach (DictionaryEntry item in (IDictionary)value)
-                    {
-                        DoWriteString(output, item.Key.ToString());
-                        output.Append(':');
-                        if (item.Value == null)
-                            output.Append("null");
-                        else
-                            GetSerializer(item.Value.GetType())(output, item.Value);
-                        output.Append(',');
-                    }
-                };
-            }
-            return new MapWriteHelper(bodyWriter).Serializer;
+                    DoWriteString(output, item.Key.ToString());
+                    output.Append(':');
+                    if (item.Value == null)
+                        output.Append("null");
+                    else
+                        GetSerializer(item.Value.GetType())(output, item.Value);
+                    output.Append(',');
+                }
+            }).Serializer;
         }
 
         static Serializer CreateGenericMapSerializer(TypeInfo pairType)
         {
             var keyProperty = pairType.GetDeclaredProperty("Key");
             var valueProperty = pairType.GetDeclaredProperty("Value");
-            var valueSerializer = GetSerializer(pairType.GenericTypeArguments[1]);
+            var valueType = pairType.GenericTypeArguments[1];
+            var valueSerializer = GetSerializer(valueType);
             return new MapWriteHelper((output, value) =>
             {
+                if (valueSerializer == null) // in case of recursion
+                    valueSerializer = GetSerializer(valueType);
                 foreach (var item in (IEnumerable)value)
                 {
                     DoWriteString(output, keyProperty.GetValue(item).ToString());
                     output.Append(':');
-                    var itemVal = valueProperty.GetValue(item);
-                    if (itemVal == null)
-                        output.Append("null");
-                    else
-                        GetSerializer(itemVal.GetType())(output, itemVal);
+                    valueSerializer(output, valueProperty.GetValue(item));
                     output.Append(',');
                 }
             }).Serializer;
@@ -380,9 +383,15 @@ namespace Json4Uwp
             return (output, value) =>
             {
                 if (value == null)
+                {
                     output.Append("null");
+                }
                 else
+                {
+                    if (innerSer == null) // in case of recursion
+                        innerSer = GetSerializer(innerType);
                     innerSer(output, value);
+                }
             };
         }
 
@@ -408,14 +417,6 @@ namespace Json4Uwp
             };
         }
 
-        static void WriteDynamicObject(StringBuilder output, object value)
-        {
-            if (value == null)
-                output.Append("null");
-            else
-                DoWriteObject(output, value, GetPropertySerializers(value.GetType()));
-        }
-
         static void DoWriteObject(StringBuilder output, object obj, PropertySerializer[] props)
         {
             if (props.Length > 0)
@@ -432,7 +433,23 @@ namespace Json4Uwp
             }
             else
             {
-                DoWriteString(output, obj.ToString());
+                output.Append("{}");
+            }
+        }
+
+        static void WriteDynamicObject(StringBuilder output, object value)
+        {
+            if (value == null)
+            {
+                output.Append("null");
+            }
+            else
+            {
+                var realType = value.GetType();
+                if (realType != typeof(object))
+                    GetSerializer(realType)(output, value);
+                else
+                    output.Append("{}");
             }
         }
 
@@ -441,28 +458,33 @@ namespace Json4Uwp
             public string Key;
             public Serializer WriteValue;
         }
-        static readonly ConcurrentDictionary<Type, PropertySerializer[]> cachedPropertySerializers = new ConcurrentDictionary<Type, PropertySerializer[]>();
         static PropertySerializer[] GetPropertySerializers(Type type)
         {
-            // Note that here we intentionally add the list to the cache first and then create items after to work against recursive defition.
-            PropertyInfo[] props = null;
-            var result = cachedPropertySerializers.GetOrAdd(type, t =>
+            var props = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+            var result = new PropertySerializer[props.Length];
+            for (int i = 0, length = props.Length; i < length; ++i)
             {
-                props = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
-                return new PropertySerializer[props.Length];
-            });
-            if (props != null)
-            {
-                for (int i = 0, length = props.Length; i < length; ++i)
+                var prop = props[i];
+                var attr = prop.GetCustomAttribute<JSONKeyAttribute>(true);
+                var key = attr != null ? attr.KeyName : prop.Name;
+                var writer = GetSerializer(prop.PropertyType);
+                if (writer != null) 
                 {
-                    var prop = props[i];
-                    var attr = prop.GetCustomAttribute<JSONKeyAttribute>(true);
-                    var key = attr != null ? attr.KeyName : prop.Name;
-                    var ser = GetSerializer(prop.PropertyType);
                     result[i] = new PropertySerializer
                     {
                         Key = key,
-                        WriteValue = (output, value) => ser(output, prop.GetValue(value))
+                        WriteValue = (output, value) => writer(output, prop.GetValue(value))
+                    };
+                }
+                else // happens when the type definition has recursion
+                {
+                    var propSer = result[i] = new PropertySerializer();
+                    propSer.Key = key;
+                    propSer.WriteValue = (output, value) =>
+                    {
+                        var newWriter = GetSerializer(prop.PropertyType);
+                        newWriter(output, prop.GetValue(value));
+                        propSer.WriteValue = (output2, value2) => newWriter(output2, prop.GetValue(value2));
                     };
                 }
             }
@@ -585,6 +607,8 @@ namespace Json4Uwp
             {
                 if (value.ValueType == JsonValueType.Null)
                     return null;
+                if (itemConverter == null) // in case of recursion
+                    itemConverter = GetConverter(itemType);
                 var jarr = value.GetArray();
                 int length = jarr.Count;
                 var array = Array.CreateInstance(itemType, length);
@@ -603,6 +627,8 @@ namespace Json4Uwp
             {
                 if (value.ValueType == JsonValueType.Null)
                     return null;
+                if (itemConverter == null) // in case of recursion
+                    itemConverter = GetConverter(itemType);
                 var jarr = value.GetArray();
                 int length = jarr.Count;
                 var list = Activator.CreateInstance(listType);
@@ -616,11 +642,14 @@ namespace Json4Uwp
         {
             if (mapTypeInfo.IsGenericType && mapTypeInfo.GenericTypeArguments.Length >= 2)
             {
-                var valueConverter = GetConverter(mapTypeInfo.GenericTypeArguments[1]);
+                var valueType = mapTypeInfo.GenericTypeArguments[1];
+                var valueConverter = GetConverter(valueType);
                 return (value) =>
                 {
                     if (value.ValueType == JsonValueType.Null)
                         return null;
+                    if (valueConverter == null) // in case of recursion
+                        valueConverter = GetConverter(valueType);
                     var jobject = value.GetObject();
                     IDictionary map = (IDictionary)Activator.CreateInstance(mapType);
                     foreach (var item in jobject)
@@ -651,11 +680,14 @@ namespace Json4Uwp
             if (pairTypeInfo.IsGenericType && pairTypeInfo.GenericTypeArguments.Length >= 2)
             {
                 var constor = pairType.GetConstructor(pairTypeInfo.GenericTypeArguments);
-                var valueConverter = GetConverter(pairTypeInfo.GenericTypeArguments[1]);
+                var valueType = pairTypeInfo.GenericTypeArguments[1];
+                var valueConverter = GetConverter(valueType);
                 return (value) =>
                 {
                     if (value.ValueType == JsonValueType.Null)
                         return null;
+                    if (valueConverter == null) // in case of recursion
+                        valueConverter = GetConverter(valueType);
                     var jobject = value.GetObject();
                     var map = Activator.CreateInstance(mapType);
                     foreach (var item in jobject)
@@ -691,7 +723,14 @@ namespace Json4Uwp
         static JConverter CreateNullableConverter(Type innerType)
         {
             var conv = GetConverter(innerType);
-            return (value) => value.ValueType == JsonValueType.Null ? null : conv(value);
+            return (value) =>
+            {
+                if (value.ValueType == JsonValueType.Null)
+                    return null;
+                if (conv == null) // in case of recursion
+                    conv = GetConverter(innerType);
+                return conv(value);
+            };
         }
 
         static JConverter CreateObjectConverter(Type type)
@@ -732,32 +771,38 @@ namespace Json4Uwp
             public bool TryLower;
             public PropertySetter SetProperty;
         }
-        static readonly ConcurrentDictionary<Type, PropertyConverter[]> cachedPropertyConverters = new ConcurrentDictionary<Type, PropertyConverter[]>();
         static PropertyConverter[] GetPropertyConverters(Type type)
         {
-            // Note that here we intentionally add the list to the cache first and then create items after to work against recursive defition.
-            PropertyInfo[] props = null;
-            var result = cachedPropertyConverters.GetOrAdd(type, t =>
+            var props = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+            var result = new PropertyConverter[props.Length];
+            for (int i = 0, length = props.Length; i < length; ++i)
             {
-                props = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
-                return new PropertyConverter[props.Length];
-            });
-            if (props != null)
-            {
-                for (int i = 0, length = props.Length; i < length; ++i)
+                var prop = props[i];
+                var attr = prop.GetCustomAttribute<JSONKeyAttribute>(true);
+                var key = attr != null ? attr.KeyName : prop.Name;
+                var conv = GetConverter(prop.PropertyType);
+                if (conv != null)
                 {
-                    var prop = props[i];
-                    var attr = prop.GetCustomAttribute<JSONKeyAttribute>(true);
-                    var key = attr != null ? attr.KeyName : prop.Name;
-                    var conv = GetConverter(prop.PropertyType);
-                    result[i] = new PropertyConverter {
+                    result[i] = new PropertyConverter
+                    {
                         Key = key,
                         TryLower = attr == null && Char.IsUpper(key[0]),
                         SetProperty = (value, obj) => prop.SetValue(obj, conv(value))
                     };
                 }
-                return result;
-            };
+                else // happens when the type definition has recursion
+                {
+                    var propConv = result[i] = new PropertyConverter();
+                    propConv.Key = key;
+                    propConv.TryLower = attr == null && Char.IsUpper(key[0]);
+                    propConv.SetProperty = (value, obj) =>
+                    {
+                        var newConv = GetConverter(prop.PropertyType);
+                        prop.SetValue(obj, newConv(value));
+                        propConv.SetProperty = (value2, obj2) => prop.SetValue(obj2, newConv(value2));
+                    };
+                }
+            }
             return result;
         }
 
