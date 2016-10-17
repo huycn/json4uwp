@@ -465,7 +465,7 @@ namespace Json4Uwp
             for (int i = 0, length = props.Length; i < length; ++i)
             {
                 var prop = props[i];
-                var attr = prop.GetCustomAttribute<JSONKeyAttribute>(true);
+                var attr = prop.GetCustomAttribute<JSONKeyAttribute>(false);
                 var key = attr != null ? attr.KeyName : prop.Name;
                 var writer = GetSerializer(prop.PropertyType);
                 if (writer != null) 
@@ -778,7 +778,7 @@ namespace Json4Uwp
             for (int i = 0, length = props.Length; i < length; ++i)
             {
                 var prop = props[i];
-                var attr = prop.GetCustomAttribute<JSONKeyAttribute>(true);
+                var attr = prop.GetCustomAttribute<JSONKeyAttribute>(false);
                 var key = attr != null ? attr.KeyName : prop.Name;
                 var conv = GetConverter(prop.PropertyType);
                 if (conv != null)
