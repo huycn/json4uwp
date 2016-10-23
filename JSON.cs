@@ -40,14 +40,21 @@ namespace Json4Uwp
         public string KeyName { get; set; }
     }
 
+    [Flags]
+    public enum StringifyOptions
+    {
+        None            = 0,
+        LowerCamelCase  = 1,    // Convert the first letter of property name to lower case
+    }
+
     public static class JSON
     {
-        public static string Stringify(object value)
+        public static string Stringify(object value, StringifyOptions options = StringifyOptions.None)
         {
             if (value != null)
             {
                 var buffer = new StringBuilder();
-                GetSerializer(value.GetType())(buffer, value);
+                GetSerializer(value.GetType())(buffer, value, options);
                 return buffer.ToString();
             }
             return "null";
@@ -76,6 +83,7 @@ namespace Json4Uwp
                     return (T)CachedConverter<T>.Instance(JsonValue.Parse(json));
             }
         }
+
         public static bool TryParse<T>(string json, out T output)
         {
             output = default(T);
@@ -94,7 +102,7 @@ namespace Json4Uwp
         #region Private Implementation: Serializer
         const string DATETIME_FORMAT = "yyyy-MM-ddTHH:mm:ss.fffZ";
 
-        delegate void Serializer(StringBuilder output, object value);
+        delegate void Serializer(StringBuilder output, object value, StringifyOptions options);
 
         static Serializer GetSerializer(Type type)
         {
@@ -175,7 +183,7 @@ namespace Json4Uwp
             }
         }
 
-        static void WriteString(StringBuilder output, object value)
+        static void WriteString(StringBuilder output, object value, StringifyOptions options)
         {
             if (value == null)
                 output.Append("null");
@@ -209,26 +217,26 @@ namespace Json4Uwp
             output.Append('"');
         }
 
-        static void WriteJsonValue(StringBuilder output, object value)
+        static void WriteJsonValue(StringBuilder output, object value, StringifyOptions options)
         {
             output.Append(((IJsonValue)value).Stringify());
         }
 
-        static void WriteBoolean(StringBuilder output, object value)
+        static void WriteBoolean(StringBuilder output, object value, StringifyOptions options)
         {
             output.Append((bool)value ? "true" : "false");
         }
-        static void WritePrimitive(StringBuilder output, object value)
+        static void WritePrimitive(StringBuilder output, object value, StringifyOptions options)
         {
             output.Append(value);
         }
-        static void WriteDateTimeOffset(StringBuilder output, object value)
+        static void WriteDateTimeOffset(StringBuilder output, object value, StringifyOptions options)
         {
             output.Append('"')
                 .Append(((DateTimeOffset)value).ToUniversalTime().ToString(DATETIME_FORMAT, CultureInfo.InvariantCulture))
                 .Append('"');
         }
-        static void WriteDateTime(StringBuilder output, object value)
+        static void WriteDateTime(StringBuilder output, object value, StringifyOptions options)
         {
             output.Append(((DateTime)value).ToUniversalTime().ToString(DATETIME_FORMAT, CultureInfo.InvariantCulture));
         }
@@ -246,25 +254,25 @@ namespace Json4Uwp
             if (itemType != null && itemType != typeof(object) && !itemType.GetTypeInfo().IsAbstract)
             {
                 var itemSerializer = GetSerializer(itemType);
-                return new ArrayWriteHelper((output, value) =>
+                return new ArrayWriteHelper((output, value, options) =>
                 {
                     if (itemSerializer == null) // in case of recursion
                         itemSerializer = GetSerializer(itemType);
                     foreach (var item in (IEnumerable)value)
                     {
-                        itemSerializer(output, item);
+                        itemSerializer(output, item, options);
                         output.Append(',');
                     }
                 }).Serializer;
             }
-            return new ArrayWriteHelper((output, value) =>
+            return new ArrayWriteHelper((output, value, options) =>
             {
                 foreach (var item in (IEnumerable)value)
                 {
                     if (item == null)
                         output.Append("null");
                     else
-                        GetSerializer(item.GetType())(output, item);
+                        GetSerializer(item.GetType())(output, item, options);
                     output.Append(',');
                 }
             }).Serializer;
@@ -275,7 +283,7 @@ namespace Json4Uwp
             Serializer WriteContent;
             public ArrayWriteHelper(Serializer contentWriter) { WriteContent = contentWriter; }
 
-            public void Serializer(StringBuilder output, object value)
+            public void Serializer(StringBuilder output, object value, StringifyOptions options)
             {
                 if (value == null)
                 {
@@ -285,7 +293,7 @@ namespace Json4Uwp
                 {
                     output.Append('[');
                     int oldLength = output.Length;
-                    WriteContent(output, value);
+                    WriteContent(output, value, options);
                     int newLength = output.Length;
                     if (oldLength != newLength)
                         output[newLength - 1] = ']';
@@ -303,7 +311,7 @@ namespace Json4Uwp
                 if (valueType != typeof(object) && !valueType.GetTypeInfo().IsAbstract)
                 {
                     var valueSerializer = GetSerializer(valueType);
-                    return new MapWriteHelper((output, value) =>
+                    return new MapWriteHelper((output, value, options) =>
                     {
                         if (valueSerializer == null) // in case of recursion
                             valueSerializer = GetSerializer(valueType);
@@ -311,13 +319,13 @@ namespace Json4Uwp
                         {
                             DoWriteString(output, item.Key.ToString());
                             output.Append(':');
-                            valueSerializer(output, item.Value);
+                            valueSerializer(output, item.Value, options);
                             output.Append(',');
                         }
                     }).Serializer;
                 }
             }
-            return new MapWriteHelper((output, value) =>
+            return new MapWriteHelper((output, value, options) =>
             {
                 foreach (DictionaryEntry item in (IDictionary)value)
                 {
@@ -326,7 +334,7 @@ namespace Json4Uwp
                     if (item.Value == null)
                         output.Append("null");
                     else
-                        GetSerializer(item.Value.GetType())(output, item.Value);
+                        GetSerializer(item.Value.GetType())(output, item.Value, options);
                     output.Append(',');
                 }
             }).Serializer;
@@ -338,7 +346,7 @@ namespace Json4Uwp
             var valueProperty = pairType.GetDeclaredProperty("Value");
             var valueType = pairType.GenericTypeArguments[1];
             var valueSerializer = GetSerializer(valueType);
-            return new MapWriteHelper((output, value) =>
+            return new MapWriteHelper((output, value, options) =>
             {
                 if (valueSerializer == null) // in case of recursion
                     valueSerializer = GetSerializer(valueType);
@@ -346,7 +354,7 @@ namespace Json4Uwp
                 {
                     DoWriteString(output, keyProperty.GetValue(item).ToString());
                     output.Append(':');
-                    valueSerializer(output, valueProperty.GetValue(item));
+                    valueSerializer(output, valueProperty.GetValue(item), options);
                     output.Append(',');
                 }
             }).Serializer;
@@ -357,7 +365,7 @@ namespace Json4Uwp
             Serializer WriteContent;
             public MapWriteHelper(Serializer contentWriter) { WriteContent = contentWriter; }
 
-            public void Serializer(StringBuilder output, object value)
+            public void Serializer(StringBuilder output, object value, StringifyOptions options)
             {
                 if (value == null)
                 {
@@ -367,7 +375,7 @@ namespace Json4Uwp
                 {
                     output.Append('{');
                     int oldLength = output.Length;
-                    WriteContent(output, value);
+                    WriteContent(output, value, options);
                     int newLength = output.Length;
                     if (oldLength != newLength)
                         output[newLength - 1] = '}';
@@ -380,7 +388,7 @@ namespace Json4Uwp
         static Serializer CreateNullableSerializer(Type innerType)
         {
             var innerSer = GetSerializer(innerType);
-            return (output, value) =>
+            return (output, value, options) =>
             {
                 if (value == null)
                 {
@@ -390,7 +398,7 @@ namespace Json4Uwp
                 {
                     if (innerSer == null) // in case of recursion
                         innerSer = GetSerializer(innerType);
-                    innerSer(output, value);
+                    innerSer(output, value, options);
                 }
             };
         }
@@ -398,7 +406,7 @@ namespace Json4Uwp
         static Serializer CreateObjectSerializer(Type type, bool sealedType)
         {
             var props = GetPropertySerializers(type);
-            return (output, value) => {
+            return (output, value, options) => {
                 if (value == null)
                 {
                     output.Append("null");
@@ -407,26 +415,26 @@ namespace Json4Uwp
                 {
                     if (sealedType || value.GetType() == type)
                     {
-                        DoWriteObject(output, value, props);
+                        DoWriteObject(output, value, props, options);
                     }
                     else
                     {
-                        DoWriteObject(output, value, GetPropertySerializers(value.GetType()));
+                        DoWriteObject(output, value, GetPropertySerializers(value.GetType()), options);
                     }
                 }
             };
         }
 
-        static void DoWriteObject(StringBuilder output, object obj, PropertySerializer[] props)
+        static void DoWriteObject(StringBuilder output, object obj, PropertySerializer[] props, StringifyOptions options)
         {
             if (props.Length > 0)
             {
                 output.Append('{');
                 foreach (var entry in props)
                 {
-                    DoWriteString(output, entry.Key);
+                    DoWriteString(output, (options & StringifyOptions.LowerCamelCase) != 0 ? ToLowerCamelCase(entry.Key) : entry.Key);
                     output.Append(':');
-                    entry.WriteValue(output, obj);
+                    entry.WriteValue(output, obj, options);
                     output.Append(',');
                 }
                 output[output.Length - 1] = '}';
@@ -437,7 +445,16 @@ namespace Json4Uwp
             }
         }
 
-        static void WriteDynamicObject(StringBuilder output, object value)
+        static string ToLowerCamelCase(string name)
+        {
+            if (name.Length > 0 && Char.IsUpper(name[0]))
+            {
+                return Char.ToLower(name[0]) + name.Substring(1);
+            }
+            return name;
+        }
+
+        static void WriteDynamicObject(StringBuilder output, object value, StringifyOptions options)
         {
             if (value == null)
             {
@@ -447,7 +464,7 @@ namespace Json4Uwp
             {
                 var realType = value.GetType();
                 if (realType != typeof(object))
-                    GetSerializer(realType)(output, value);
+                    GetSerializer(realType)(output, value, options);
                 else
                     output.Append("{}");
             }
@@ -473,18 +490,18 @@ namespace Json4Uwp
                     result[i] = new PropertySerializer
                     {
                         Key = key,
-                        WriteValue = (output, value) => writer(output, prop.GetValue(value))
+                        WriteValue = (output, value, options) => writer(output, prop.GetValue(value), options)
                     };
                 }
                 else // happens when the type definition has recursion
                 {
                     var propSer = result[i] = new PropertySerializer();
                     propSer.Key = key;
-                    propSer.WriteValue = (output, value) =>
+                    propSer.WriteValue = (output, value, options) =>
                     {
                         var newWriter = GetSerializer(prop.PropertyType);
-                        newWriter(output, prop.GetValue(value));
-                        propSer.WriteValue = (output2, value2) => newWriter(output2, prop.GetValue(value2));
+                        newWriter(output, prop.GetValue(value), options);
+                        propSer.WriteValue = (output2, value2, options2) => newWriter(output2, prop.GetValue(value2), options2);
                     };
                 }
             }

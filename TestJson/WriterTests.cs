@@ -8,6 +8,14 @@ using Windows.Data.Json;
 
 namespace TestJson
 {
+    class Person
+    {
+        [JSONKey("name")]
+        public string FirstAndLastName { get; set; }
+
+        public int Age { get; set; }
+    }
+
     [TestClass]
     public class WriterTests
     {
@@ -26,6 +34,9 @@ namespace TestJson
             Assert.AreEqual(@"""Jay's son name is \""Jayson\""""", JSON.Stringify(@"Jay's son name is ""Jayson"""));
             Assert.AreEqual(@"""\\ \"" ' \b \f \n \r \t \u001a   " + "\u4f60\u597d\"", JSON.Stringify("\\ \" ' \b \f \n \r \t \x1a \x7f \x9f \u4f60\u597d"));
             Assert.AreEqual("\"Hello\"", JSON.Stringify((object)"Hello"));
+            Assert.AreEqual("{\"method\":\"getBirthdayDate\",\"params\":{\"user\":\"bob\",\"format\":{}}}", JSON.Stringify(new { method = "getBirthdayDate", @params = new { user = "bob", format = new { }  } }));
+            Assert.AreEqual("{\"name\":\"Alice\",\"Age\":23}", JSON.Stringify(new Person { FirstAndLastName = "Alice", Age = 23 }));
+            Assert.AreEqual("{\"name\":\"Alice\",\"age\":23}", JSON.Stringify(new Person { FirstAndLastName = "Alice", Age = 23 }, StringifyOptions.LowerCamelCase));
         }
 
         [TestMethod]
