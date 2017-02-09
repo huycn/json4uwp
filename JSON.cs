@@ -227,7 +227,7 @@ namespace Json4Uwp
         }
         static void WritePrimitive(StringBuilder output, object value, StringifyOptions options)
         {
-            output.Append(value);
+            output.Append(Convert.ToString(value, CultureInfo.InvariantCulture));
         }
         static void WriteDateTimeOffset(StringBuilder output, object value, StringifyOptions options)
         {
