@@ -154,9 +154,8 @@ namespace Json4Uwp
                 }
                 if (typeof(IEnumerable).IsAssignableFrom(type))
                 {
-                    var dictType = typeInfo.ImplementedInterfaces
-                        .Select(t => t.GetTypeInfo())
-                        .FirstOrDefault(ti => ti.IsGenericType && ti.GetGenericTypeDefinition() == typeof(IDictionary<,>));
+                    var dictType = IsGenericDictionary(typeInfo) ? typeInfo :
+                        typeInfo.ImplementedInterfaces.FirstOrDefault(t => IsGenericDictionary(t.GetTypeInfo()))?.GetTypeInfo();
                     if (dictType != null)
                     {
                         var pairType = dictType.ImplementedInterfaces
@@ -180,6 +179,14 @@ namespace Json4Uwp
                 }
                 return WriteDynamicObject;
             }
+        }
+
+        static bool IsGenericDictionary(TypeInfo ti)
+        {
+            if (!ti.IsGenericType)
+                return false;
+            var td = ti.GetGenericTypeDefinition();
+            return td == typeof(IDictionary<,>) || td == typeof(IReadOnlyDictionary<,>);
         }
 
         static void WriteString(StringBuilder output, object value, StringifyOptions options)
